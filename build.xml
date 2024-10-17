@@ -1,0 +1,273 @@
+<project name="blank" default="all">
+
+    <property name="distpath.project"  location="${basedir}/dist"/>
+
+    <!-- Project settings -->
+    <property name="project.title" value="SPLC Example"/>
+    <property name="project.distname" value="splc"/>
+    <property name="project.version" value="1.0"/>
+
+    <!-- Path settings -->
+	<property name="web-inf" location="${basedir}/WEB-INF"/>
+    <property name="src.java" location="${web-inf}/src/java"/>
+    <property name="libs" location="${web-inf}/lib"/>
+    <property name="classes" location="${web-inf}/classes"/>
+	<property name="db.dir" location="${web-inf}/database"/>
+	<property name="build.dir" location="${basedir}/build"/>
+	<property name="build.jsp.dir" location="${build.dir}/jsp"/>
+	<property name="jsp.web.xml.fragment" value="${build.jsp.dir}/generated_web.xml"/>
+
+	<property name="jdbc.url" value="jdbc:hsqldb:file:${db.dir}/splc"/>
+	<property name="jdbc.driver" value="org.hsqldb.jdbcDriver"/>
+	<property name="jdbc.username" value="sa"/>
+	<property name="jdbc.password" value=""/>
+
+	<property name="tomcat5.5.dir" location="${basedir}/etc/tomcat5.5-support"/>
+	<property name="jboss4.dir" location="${basedir}/etc/jboss4-support"/>
+
+
+    <path id="javac.classpath">
+        <fileset dir="${libs}">
+            <include name="**/*.jar" />
+        </fileset>
+	    <fileset dir="${basedir}/lib">
+		    <include name="**/*.jar" />
+	    </fileset>
+    </path>
+
+    <path id="jsp.classpath">
+        <fileset dir="${libs}">
+            <include name="**/*.jar" />
+        </fileset>
+        <pathelement path="${classes}"/>
+    </path>
+
+
+	<!-- no-op target for conditional branches -->
+	<target name="server-support"/>
+
+
+    <!-- Check timestamp on files -->
+    <target name="prepare">
+        <tstamp/>
+    </target>
+
+
+    <!-- Copy any resource or configuration files -->
+    <target name="resources">
+        <copy todir="${classes}" includeEmptyDirs="no">
+            <fileset dir="${src.java}">
+                <patternset>
+                    <include name="**/*.conf"/>
+                    <include name="**/*.properties"/>
+                    <include name="**/*.xml"/>
+                </patternset>
+            </fileset>
+        </copy>
+    </target>
+
+
+    <!-- Normal compile -->
+    <target name="compile" depends="prepare,resources">
+	    <condition property="compile-server-support.target" value="compile-tomcat5.5-support">
+			<equals arg1="${server}" arg2="tomcat5.5"/>
+		</condition>
+	    <condition property="compile-server-support.target" value="compile-jboss4-support">
+			<equals arg1="${server}" arg2="jboss4"/>
+		</condition>
+	    <!-- ELSE: --> <property name="compile-server-support.target" value="server-support"/>
+	    <antcall target="${compile-server-support.target}"/>
+
+        <javac srcdir="${src.java}" destdir="${classes}" debug="on">
+            <classpath refid="javac.classpath"/>
+        </javac>
+	    <delete file="${basedir}/WEB-INF/web.xml"/>
+		<copy tofile="${basedir}/WEB-INF/web.xml" file="${basedir}/WEB-INF/template_web.xml"/>
+    </target>
+
+	<target name="compile-tomcat5.5-support">
+		<property name="server-support.src" location="${tomcat5.5.dir}/src"/>
+		<echo>Replacing some classes with those under ${server-support.src}</echo>
+		<javac srcdir="${server-support.src}" destdir="${classes}" debug="on">
+            <classpath refid="javac.classpath"/>
+        </javac>
+	</target>
+
+	<target name="compile-jboss4-support">
+		<property name="server-support.src" location="${jboss4.dir}/src"/>
+		<echo>Replacing some classes with those under ${server-support.src}</echo>
+		<javac srcdir="${server-support.src}" destdir="${classes}" debug="on">
+            <classpath refid="javac.classpath"/>
+        </javac>
+	</target>
+
+    <!-- to build using precompiled jsps: do a normal build, then do
+         ant -Dtomcat.home="YOUR_TOMCAT_HOME" jsp-precompile dist
+    -->
+	<target name="jsp-precompile" depends="compile">
+		<mkdir dir="${build.jsp.dir}"/>
+		<mkdir dir="${classes}"/>
+		<taskdef classname="org.apache.jasper.JspC" name="jasper" >
+			<classpath id="jspc.classpath">
+				<pathelement location="${java.home}/../lib/tools.jar"/>
+				<fileset dir="${tomcat.home}/server/lib">
+					<include name="*.jar"/>
+				</fileset>
+				<fileset dir="${tomcat.home}/common/lib">
+					<include name="*.jar"/>
+				</fileset>
+				<path refid="javac.classpath"/>
+			</classpath>
+		</taskdef>
+		<jasper validateXml="false"
+				uriroot="${basedir}"
+				webXmlFragment="${jsp.web.xml.fragment}"
+				outputDir="${build.jsp.dir}" 
+				/>
+		<javac destdir="${classes}"
+				optimize="off"
+				debug="on" failonerror="true"
+				srcdir="${build.jsp.dir}"
+			 	excludes="generated_web.xml">
+			<classpath>
+				<path refid="javac.classpath"/>
+				<fileset dir="${tomcat.home}/common/lib" includes="*.jar"/>
+			</classpath>
+			<include name="**" />
+			<exclude name="tags/**" />
+		</javac>
+		<loadfile property="web.xml.fragment" srcfile="${jsp.web.xml.fragment}"/>
+		<replace token="JSP-PRECOMPILE-PLACEHOLDER" value="${web.xml.fragment}" file="${basedir}/WEB-INF/web.xml"/>
+	</target>
+
+	<target name="create-db">
+		<mkdir dir="${db.dir}"/>
+		<antcall target="execute-sql-script">
+			<param name="sql.script" value="${basedir}/create_db.sql"/>
+		</antcall>
+		<antcall target="execute-sql">
+			<param name="sql.commands" value="
+				COMMIT;
+				SHUTDOWN;"/>
+		</antcall>
+	</target>
+	<target name="execute-sql-script"> <!-- parameterized on sql.script -->
+		<sql
+			driver="${jdbc.driver}"
+	        url="${jdbc.url}"
+	        userid="${jdbc.username}"
+	        password="${jdbc.password}">
+			<classpath refid="javac.classpath"/>
+			<fileset file="${sql.script}"/>
+		</sql>
+	</target>
+	<target name="execute-sql">
+		<sql
+			driver="${jdbc.driver}"
+	        url="${jdbc.url}"
+	        userid="${jdbc.username}"
+	        password="${jdbc.password}">
+			<classpath refid="javac.classpath"/>
+			${sql.commands}
+		</sql>
+	</target>
+
+
+
+    <!-- Remove classes directory for clean build -->
+    <target name="clean">
+        <delete dir="${distpath.project}"/>
+        <delete dir="${classes}"/>
+        <delete file="splc-issues.fvdl"/>
+        <delete file="splc-issues.html"/>
+	    <delete dir="${db.dir}"/>
+	    <delete dir="${build.dir}"/>
+	    <delete file="${basedir}/WEB-INF/web.xml"/>
+    </target>
+
+    <!-- Build entire project -->
+    <target name="project" depends="clean,prepare,compile,create-db">
+    	<!-- for regular builds, JSP-PRECOMPILE-PLACEHOLDER is no-op -->
+		<replace token="JSP-PRECOMPILE-PLACEHOLDER" value="" file="${basedir}/WEB-INF/web.xml"/>
+    </target>
+
+    <!-- Create binary distribution -->
+    <target name="dist" description="Create binary distribution in .war format">
+        <mkdir dir="${distpath.project}"/>
+
+	    <condition property="context.dir" value="${tomcat5.5.dir}">
+			<equals arg1="${server}" arg2="tomcat5.5"/>
+		</condition>
+	    <condition property="context.dir" value="${jboss4.dir}">
+			<equals arg1="${server}" arg2="jboss4"/>
+		</condition>
+	    <!-- ELSE: --> <property name="context.dir" value="${basedir}"/>
+
+		<war destfile="${distpath.project}/${project.distname}.war" webxml="${web-inf}/web.xml">
+			<metainf dir="${context.dir}" includes="context.xml"/>
+            <fileset dir="${basedir}">
+                <include name="css/**"/>
+                <include name="images/**"/>
+                <include name="login/**"/>
+                <include name="pages/**"/>
+                <include name="css/**"/>
+                <include name="WEB-INF/**"/>
+                <exclude name="WEB-INF/web.xml"/>
+                <exclude name="WEB-INF/lib/servlet-api.jar"/>
+                <exclude name="WEB-INF/lib/README.txt"/>
+                <exclude name="WEB-INF/src/**"/>
+            </fileset>
+        </war>
+	</target>
+
+    <target name="ear" description="Create binary distribution in .ear format" depends="clean, project, dist">
+        <ear destfile="${distpath.project}/${project.distname}.ear" appxml="${basedir}/application.xml">
+            <fileset dir="${distpath.project}" includes="${project.distname}.war"/>
+        </ear>
+    </target>
+
+<!-- ============ Modifications for Fortify Software======================= -->
+    <available classname="com.fortify.dev.ant.SourceanalyzerTask" property="fortify.present"/>
+    <available classname="com.fortify.dev.ant.SCACompiler" property="build.compiler" value="com.fortify.dev.ant.SCACompiler"/>
+    <available classname="com.fortify.dev.ant.SCACompiler" property="sourceanalyzer.buildid" value="splc"/>
+
+    <target name="fortify" if="fortify.present">
+        <typedef name="sourceanalyzer" classname="com.fortify.dev.ant.SourceanalyzerTask"/>
+
+        <antcall target="clean"/>
+        <antcall target="compile">
+          <param name="build.compiler" value="com.fortify.dev.ant.SCACompiler" />
+        </antcall>
+        <echo>sourceanalyzer ${web-inf}</echo>
+        <sourceanalyzer buildid="${sourceanalyzer.buildid}">
+          <fileset dir="${web-inf}">
+             <include name="**/*.properties"/>
+             <include name="**/*.xml"/>
+             <exclude name="**/*.java"/>
+             <exclude name="**/*.class"/>
+          </fileset>
+        </sourceanalyzer>
+        <echo>sourceanalyzer ${basedir} jsp</echo>
+        <sourceanalyzer buildid="${sourceanalyzer.buildid}">
+          <fileset dir="${basedir}">
+             <include name="**/*.jsp"/>
+          </fileset>
+          <classpath refid="jsp.classpath"/>
+        </sourceanalyzer>
+        <echo>sourceanalyzer scan</echo>
+        <sourceanalyzer buildid="${sourceanalyzer.buildid}"
+                        analyzers="semantic:dataflow:controlflow:configuration:structural"
+                        scan="true"
+                        resultsfile="splc-issues.fvdl"
+                        format="fvdl"
+                        htmlReport="true"
+                        filter="splc_filter_categories.txt:splc_filter_issues.txt"
+                        rules="splc-issues-rules.xml:Visa_CISP_rules32.xml:db_taint_rules.xml" />
+                        <!-- rules="splc-issues-rules.xml" />  -->
+    </target>
+<!-- ============ End Fortify Software Modifications ====================== -->
+
+    <!-- Build project and create distribution-->
+    <target name="all" depends="project,dist"/>
+
+</project>
